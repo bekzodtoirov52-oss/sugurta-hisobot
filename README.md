@@ -1,1 +1,1 @@
-# sugurta-hisobot
+# kuzatuv-hisobot
