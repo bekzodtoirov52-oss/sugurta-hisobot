@@ -1,35 +1,34 @@
 import io
+import os
 import streamlit as st
 import pandas as pd
+from PIL import Image
+
+# Logotip fayli nomi
+LOGO_PATH = "logo.jpg"
+
+if os.path.exists(LOGO_PATH):
+    app_icon = Image.open(LOGO_PATH)
+else:
+    app_icon = "📊"
 
 st.set_page_config(
-    page_title="Хисобот ОСАГО",
-    page_icon="📊",
+    page_title="Bojxona Hisobot Tizimi",
+    page_icon=app_icon,
     layout="wide"
 )
 
-st.title("📊 Автоматический расчет отчетов ОСАГО")
-st.caption("Группировка по страховым компаниям, сплит 80/20 и экспорт в Excel")
+# Yuqori qism: Logotip va Sarlavha
+col_logo, col_title = st.columns([1, 10])
+with col_logo:
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, width=80)
+with col_title:
+    st.title("Davlat Bojxona Xizmati — Hisobotlar moduli")
+    st.caption("OSAGO hisob-kitobi va Kuzatuv ma'lumotlarini tahlil qilish")
 
-uploaded_file = st.file_uploader(
-    "Загрузите исходный файл отчета (.xlsx, .xls, .csv)",
-    type=["xlsx", "xls", "csv"]
-)
-
-REQUIRED_COLUMNS = [
-    "sugurta_firma",
-    "declaration",
-    "response_vaqti",
-    "seria_polis",
-    "number_polis",
-    "ins_srok",
-    "firstname",
-    "lastname",
-    "res_ins_prem"
-]
-
+# Yordamchi hisoblash funksiyalari
 def clean_numeric(val):
-    """Очищает строку от пробелов и спецсимволов и переводит в float."""
     if pd.isna(val):
         return 0.0
     if isinstance(val, (int, float)):
@@ -41,142 +40,181 @@ def clean_numeric(val):
         return 0.0
 
 def format_currency(val):
-    """Форматирует число с разделением тысяч."""
     return f"{val:,.2f}".replace(",", " ")
 
-if uploaded_file is not None:
-    try:
-        if uploaded_file.name.endswith(".csv"):
-            df_raw = pd.read_csv(uploaded_file)
-        else:
-            df_raw = pd.read_excel(uploaded_file)
+# TABLARNI YARATISH
+tab_osago, tab_kuzatuv = st.tabs(["📑 OSAGO Hisoboti", "🔍 Kuzatuv (Monitoring)"])
 
-        # Нормализация названий колонок (нижний регистр, убираем пробелы)
-        df_raw.columns = df_raw.columns.astype(str).str.strip().str.lower()
+# ==========================================
+# 1-TAB: OSAGO HISOBOTI
+# ==========================================
+with tab_osago:
+    st.subheader("OSAGO sug'urta hisobotini shakllantirish")
+    uploaded_osago = st.file_uploader(
+        "OSAGO faylini yuklang (.xlsx, .xls, .csv)",
+        type=["xlsx", "xls", "csv"],
+        key="osago_uploader"
+    )
 
-        missing_cols = [c for c in REQUIRED_COLUMNS if c not in df_raw.columns]
-        if missing_cols:
-            st.error(f"В загруженном файле отсутствуют обязательные колонки: `{', '.join(missing_cols)}`")
-            st.stop()
+    OSAGO_COLUMNS = [
+        "sugurta_firma", "declaration", "response_vaqti",
+        "seria_polis", "number_polis", "ins_srok",
+        "firstname", "lastname", "res_ins_prem"
+    ]
 
-        df = df_raw.copy()
+    if uploaded_osago is not None:
+        try:
+            if uploaded_osago.name.endswith(".csv"):
+                df_raw = pd.read_csv(uploaded_osago)
+            else:
+                df_raw = pd.read_excel(uploaded_osago)
 
-        # 1. Объединение серии и номера полиса
-        df["polis_full"] = (
-            df["seria_polis"].fillna("").astype(str).str.strip() + " " +
-            df["number_polis"].fillna("").astype(str).str.strip()
-        ).str.strip()
+            df_raw.columns = df_raw.columns.astype(str).str.strip().str.lower()
+            missing = [c for c in OSAGO_COLUMNS if c not in df_raw.columns]
 
-        # 2. Объединение Фамилии и Имени
-        df["full_name"] = (
-            df["lastname"].fillna("").astype(str).str.strip() + " " +
-            df["firstname"].fillna("").astype(str).str.strip()
-        ).str.strip()
+            if missing:
+                st.error(f"Faylda quyidagi ustunlar topilmadi: {', '.join(missing)}")
+            else:
+                df = df_raw.copy()
 
-        # 3. Приведение суммы к float и расчет 80% / 20%
-        df["res_ins_prem"] = df["res_ins_prem"].apply(clean_numeric)
-        df["prem_80"] = (df["res_ins_prem"] * 0.80).round(2)
-        df["prem_20"] = (df["res_ins_prem"] * 0.20).round(2)
+                # Birlashtirishlar
+                df["polis_full"] = (
+                    df["seria_polis"].fillna("").astype(str).str.strip() + " " +
+                    df["number_polis"].fillna("").astype(str).str.strip()
+                ).str.strip()
 
-        # Выравнивание итогового порядка колонок для детальной таблицы
-        detail_cols = [
-            "sugurta_firma",
-            "declaration",
-            "response_vaqti",
-            "polis_full",
-            "ins_srok",
-            "full_name",
-            "res_ins_prem",
-            "prem_80",
-            "prem_20"
-        ]
-        df_details = df[detail_cols]
+                df["full_name"] = (
+                    df["lastname"].fillna("").astype(str).str.strip() + " " +
+                    df["firstname"].fillna("").astype(str).str.strip()
+                ).str.strip()
 
-        # --- БЛОК 1: ОБЩИЕ ИТОГОВЫЕ МЕТРИКИ ---
-        st.subheader("📌 Общие показатели (Итого)")
-        total_policies = len(df)
-        total_companies = df["sugurta_firma"].nunique()
-        total_prem = df["res_ins_prem"].sum()
-        total_80 = df["prem_80"].sum()
-        total_20 = df["prem_20"].sum()
+                # Hisob-kitoblar (80% va 20%)
+                df["res_ins_prem"] = df["res_ins_prem"].apply(clean_numeric)
+                df["prem_80"] = (df["res_ins_prem"] * 0.80).round(2)
+                df["prem_20"] = (df["res_ins_prem"] * 0.20).round(2)
 
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Компаний", total_companies)
-        m2.metric("Всего полисов", f"{total_policies:,}".replace(",", " "))
-        m3.metric("Общая сумма (100%)", format_currency(total_prem))
-        m4.metric("Доля 80%", format_currency(total_80))
-        m5.metric("Доля 20%", format_currency(total_20))
+                detail_cols = [
+                    "sugurta_firma", "declaration", "response_vaqti",
+                    "polis_full", "ins_srok", "full_name",
+                    "res_ins_prem", "prem_80", "prem_20"
+                ]
+                df_details = df[detail_cols]
 
-        st.markdown("---")
+                # Umumiy statistika kartalari
+                st.markdown("#### 📌 Umumiy ko‘rsatkichlar (Jami)")
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Firmalar soni", df["sugurta_firma"].nunique())
+                m2.metric("Polislar soni", f"{len(df):,}".replace(",", " "))
+                m3.metric("Jami summa (100%)", format_currency(df["res_ins_prem"].sum()))
+                m4.metric("Jami 80%", format_currency(df["prem_80"].sum()))
+                m5.metric("Jami 20%", format_currency(df["prem_20"].sum()))
 
-        # --- БЛОК 2: СВОДНАЯ СТАТИСТИКА ПО КОМПАНИЯМ ---
-        st.subheader("🏢 Сводка по страховым компаниям")
+                st.markdown("---")
 
-        summary_df = df.groupby("sugurta_firma", as_index=False).agg(
-            soni=("declaration", "count"),
-            jami_prem=("res_ins_prem", "sum"),
-            jami_80=("prem_80", "sum"),
-            jami_20=("prem_20", "sum")
-        ).rename(columns={
-            "sugurta_firma": "Страховая компания",
-            "soni": "Кол-во полисов",
-            "jami_prem": "Общая сумма (100%)",
-            "jami_80": "Сумма 80%",
-            "jami_20": "Сумма 20%"
-        }).sort_values(by="Кол-во полисов", ascending=False)
+                # Firma bo'yicha alohida xisob-kitob jadvali
+                st.markdown("#### 🏢 Sug'urta firmalari kesimida hisobot")
+                summary_df = df.groupby("sugurta_firma", as_index=False).agg(
+                    soni=("declaration", "count"),
+                    jami_prem=("res_ins_prem", "sum"),
+                    jami_80=("prem_80", "sum"),
+                    jami_20=("prem_20", "sum")
+                ).rename(columns={
+                    "sugurta_firma": "Sug'urta firmasi",
+                    "soni": "Polis soni",
+                    "jami_prem": "Umumiy summa (100%)",
+                    "jami_80": "Ulush 80%",
+                    "jami_20": "Ulush 20%"
+                }).sort_values(by="Polis soni", ascending=False)
 
-        # Отображение сводной таблицы с форматированием
-        st.dataframe(
-            summary_df.style.format({
-                "Кол-во полисов": "{:,}",
-                "Общая сумма (100%)": "{:,.2f}",
-                "Сумма 80%": "{:,.2f}",
-                "Сумма 20%": "{:,.2f}"
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
+                st.dataframe(
+                    summary_df.style.format({
+                        "Polis soni": "{:,}",
+                        "Umumiy summa (100%)": "{:,.2f}",
+                        "Ulush 80%": "{:,.2f}",
+                        "Ulush 20%": "{:,.2f}"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-        st.markdown("---")
+                st.markdown("---")
 
-        # --- БЛОК 3: ДЕТАЛИЗИРОВАННАЯ ТАБЛИЦА С ФИЛЬТРОМ ---
-        st.subheader("📋 Детализированный реестр полисов")
+                # Tafsilotlar jadvali va filtr
+                st.markdown("#### 📋 Polislarning to'liq reestri")
+                firm_list = ["Barcha firmalar"] + sorted(df["sugurta_firma"].dropna().unique().tolist())
+                chosen_firm = st.selectbox("Sug'urta kompaniyasini tanlang:", firm_list)
 
-        all_firms = ["Все компании"] + sorted(df["sugurta_firma"].dropna().unique().tolist())
-        selected_firm = st.selectbox("Фильтр по страховой компании:", all_firms)
+                if chosen_firm != "Barcha firmalar":
+                    view_df = df_details[df_details["sugurta_firma"] == chosen_firm]
+                else:
+                    view_df = df_details
 
-        if selected_firm != "Все компании":
-            filtered_df = df_details[df_details["sugurta_firma"] == selected_firm]
-        else:
-            filtered_df = df_details
+                st.dataframe(
+                    view_df.style.format({
+                        "res_ins_prem": "{:,.2f}",
+                        "prem_80": "{:,.2f}",
+                        "prem_20": "{:,.2f}"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
 
-        st.write(f"Отображено записей: **{len(filtered_df)}**")
-        st.dataframe(
-            filtered_df.style.format({
-                "res_ins_prem": "{:,.2f}",
-                "prem_80": "{:,.2f}",
-                "prem_20": "{:,.2f}"
-            }),
-            use_container_width=True,
-            hide_index=True
-        )
+                # Excelga yuklab olish
+                excel_buff = io.BytesIO()
+                with pd.ExcelWriter(excel_buff, engine="openpyxl") as writer:
+                    summary_df.to_excel(writer, sheet_name="Firma_Svodi", index=False)
+                    df_details.to_excel(writer, sheet_name="Batafsil_Polislar", index=False)
+                excel_buff.seek(0)
 
-        # --- БЛОК 4: ЭКСПОРТ В EXCEL ---
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine="openpyxl") as writer:
-            summary_df.to_excel(writer, sheet_name="Сводка_Компании", index=False)
-            df_details.to_excel(writer, sheet_name="Детализация", index=False)
+                st.download_button(
+                    label="📥 OSAGO hisobotini Excelda yuklab olish",
+                    data=excel_buff,
+                    file_name="osago_hisobot.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+        except Exception as e:
+            st.error(f"Xatolik yuz berdi: {e}")
+    else:
+        st.info("Hisoblashni boshlash uchun OSAGO faylini yuklang.")
 
-        excel_buffer.seek(0)
+# ==========================================
+# 2-TAB: KUZATUV (MONITORING)
+# ==========================================
+with tab_kuzatuv:
+    st.subheader("Bojxona kuzatuvi (Monitoring) hisoboti")
+    uploaded_kuzatuv = st.file_uploader(
+        "Kuzatuv faylini yuklang (.xlsx, .xls, .csv)",
+        type=["xlsx", "xls", "csv"],
+        key="kuzatuv_uploader"
+    )
 
-        st.download_button(
-            label="📥 Скачать полный отчет в Excel (.xlsx)",
-            data=excel_buffer,
-            file_name="xisobot_osago_hisoblangan.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    if uploaded_kuzatuv is not None:
+        try:
+            if uploaded_kuzatuv.name.endswith(".csv"):
+                df_kuzatuv = pd.read_csv(uploaded_kuzatuv)
+            else:
+                df_kuzatuv = pd.read_excel(uploaded_kuzatuv)
 
-    except Exception as e:
-        st.error(f"Произошла ошибка при обработке файла: {e}")
-else:
-    st.info("Пожалуйста, загрузите файл с отчетом для начала расчета.")
+            df_kuzatuv.columns = df_kuzatuv.columns.astype(str).str.strip().str.lower()
+
+            st.success(f"Fayl muvaffaqiyatli yuklandi! Jami yozuvlar: {len(df_kuzatuv):,}".replace(",", " "))
+
+            # Kuzatuv ma'lumotlari jadvali
+            st.dataframe(df_kuzatuv, use_container_width=True)
+
+            # Kuzatuv faylini ham qayta yuklab olish imkoniyati
+            kuzatuv_buff = io.BytesIO()
+            with pd.ExcelWriter(kuzatuv_buff, engine="openpyxl") as writer:
+                df_kuzatuv.to_excel(writer, sheet_name="Kuzatuv", index=False)
+            kuzatuv_buff.seek(0)
+
+            st.download_button(
+                label="📥 Kuzatuv ma'lumotlarini Excelda yuklab olish",
+                data=kuzatuv_buff,
+                file_name="kuzatuv_hisobot.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        except Exception as e:
+            st.error(f"Kuzatuv faylini o‘qishda xatolik: {e}")
+    else:
+        st.info("Kuzatuv ma'lumotlarini ko‘rish uchun fayl yuklang.")
